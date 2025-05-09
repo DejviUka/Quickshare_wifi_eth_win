@@ -52,8 +52,3 @@
  NOTES:
    - The script auto-elevates if not run as Administrator.
    - If no adapter matches the MAC list, the script will exit with an error.
-
- LICENSE:
-   MIT License (or your preferred license).
-
- END OF README
