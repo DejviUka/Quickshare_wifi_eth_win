@@ -1,0 +1,8 @@
+# mac.txt - Adapter MAC address priority list
+# Use "-" or ":" separator (case insensitive)
+
+wifi: A1-B2-C3-D4-E5-F7
+wifi: A1-B2-C3-D4-E5-F6
+
+ethernet: 02-AB-CD-EF-12-35
+ethernet: 02-AB-CD-EF-12-34
