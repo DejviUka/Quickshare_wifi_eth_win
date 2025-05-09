@@ -1,15 +1,14 @@
  Wi-Fi Sharing Toggle Script
 
- This README is written as code comments to avoid interfering with Markdown renderers.
-
  SYNOPSIS:
    Toggle Windows Internet Connection Sharing (ICS) between a prioritized Wi-Fi adapter
    and a prioritized Ethernet adapter, based on MAC address lists.
 
  FILES:
-   - wifishare.ps1       : PowerShell script implementing the toggle logic.
+   - wifishare.ps1       : PowerShell script implementing the toggle logic and auto-scan functions.
    - mac.txt             : Priority list of Wi-Fi and Ethernet MAC addresses.
    - run-wifishare.cmd   : Batch wrapper for launching the PowerShell script.
+   - README.md           : This documentation file.
 
  PREREQUISITES:
    - Windows 8, 10, or 11
@@ -21,20 +20,22 @@
    Accepts '-' or ':' separators, case-insensitive.
 
    Example:
-     wifi:    3C-55-76-48-60-31
+     wifi:    XX:XX:XX:XX:XX:XX
      wifi:    A1:B2:C3:D4:E5:F6
-     ethernet:5C-60-BA-77-0E-D1
+     ethernet:XX:XX:XX:XX:XX:XX
      ethernet:02-AB-CD-EF-12-34
 
  USAGE:
-   1. Place wifishare.ps1, mac.txt, and run-wifishare.cmd in the same folder.
+   1. Place wifishare.ps1, mac.txt, run-wifishare.cmd, and README.md in the same folder.
    2. Edit mac.txt to define your adapter priority lists.
    3. Double-click run-wifishare.cmd (or execute it from a command prompt).
    4. A menu will prompt you to:
         1. Enable sharing
         2. Disable sharing
-        3. Add a Wi-Fi MAC to mac.txt
-        4. Add an Ethernet MAC to mac.txt
+        3. Add a Wi-Fi MAC (manual entry)
+        4. Add an Ethernet MAC (manual entry)
+        5. Auto-add a Wi-Fi MAC (scan and select)
+        6. Auto-add an Ethernet MAC (scan and select)
         Q. Quit the script
 
  LOGGING:
