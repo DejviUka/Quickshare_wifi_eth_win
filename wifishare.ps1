@@ -19,7 +19,7 @@ function Ensure-RunAsAdmin {
             [Security.Principal.WindowsBuiltInRole]::Administrator
         )) {
         Log "Not admin; relaunching elevated."
-        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`"" -Verb RunAs
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
         exit
     }
     Log "Running as admin."
@@ -42,12 +42,11 @@ function Load-MacList {
     return @{ wifi = $wifiMacs; ethernet = $ethMacs }
 }
 
-# === Add to MAC file ===
+# === Add to MAC file (manual) ===
 function Add-Mac {
     param($type)
     $mac = Read-Host "Enter $type MAC address (e.g., AA:BB:CC:DD:EE:FF)"
     if ($mac -match "^[0-9A-Fa-f:-]{17}$") {
-        # Use formatted string to avoid ":" being mis-parsed
         ("{0}: {1}" -f $type, $mac) | Out-File $macFile -Append
         Log "Added $type MAC: $mac"
         Write-Host "$type MAC added."
@@ -57,48 +56,69 @@ function Add-Mac {
     }
 }
 
-# === ICS Setup ===
+# === Auto-scan & add MAC ===
+function Add-MacAuto {
+    param([ValidateSet('wifi','ethernet')] $type)
+    if ($type -eq 'wifi') {
+        $adapters = Get-NetAdapter | Where-Object { $_.Name -match 'Wi-?Fi' -or $_.InterfaceDescription -match 'Wireless' }
+    } else {
+        $adapters = Get-NetAdapter | Where-Object { $_.Name -match 'Ethernet' -or $_.InterfaceDescription -match 'Ethernet' }
+    }
+    if (-not $adapters) {
+        Write-Host "No $type adapters found."
+        return
+    }
+    Write-Host "`nSelect a $type adapter to add:`n"
+    for ($i = 0; $i -lt $adapters.Count; $i++) {
+        $a = $adapters[$i]
+        Write-Host "[$i] IDX:$($a.InterfaceIndex) Name: $($a.Name) MAC: $($a.MacAddress) Status: $($a.Status) LinkSpeed: $($a.LinkSpeed)"
+    }
+    $sel = Read-Host "`nEnter number (0..$($adapters.Count - 1)) or Q to cancel"
+    if ($sel -match '^[0-9]+$' -and [int]$sel -lt $adapters.Count) {
+        $chosen = $adapters[[int]$sel]
+        $mac = $chosen.MacAddress
+        ("{0}: {1}" -f $type, $mac) | Out-File $macFile -Append
+        Log "Added $type MAC (auto): $mac ($($chosen.Name))"
+        Write-Host "$type MAC $mac added."
+    } else {
+        Write-Host "Cancelled or invalid selection."
+        Log "Auto-add $type cancelled/invalid: $sel"
+    }
+}
+
+# === ICS COM setup ===
 Log "Creating HNetCfg.HNetShare"
 $shareMgr = New-Object -ComObject HNetCfg.HNetShare
 $allConns = @($shareMgr.EnumEveryConnection())
+function GetProps($c)  { $shareMgr.NetConnectionProps($c) }
+function GetConfig($c){ $shareMgr.INetSharingConfigurationForINetConnection($c) }
 
-function GetProps($c) { $shareMgr.NetConnectionProps($c) }
-function GetConfig($c) { $shareMgr.INetSharingConfigurationForINetConnection($c) }
-
-# === Get MAC address for adapter ===
-function Get-MacAddress($conn) {
+# === Get adapter MAC by connection object ===
+function Get-MacAddress {
+    param($conn)
     $name = (GetProps $conn).Name
-    $adapter = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $name }
-    return $adapter.MacAddress -replace "[:-]", ""
+    $adapter = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Name -EQ $name
+    return $adapter.MacAddress -replace '[:-]', ''
 }
 
-# === Match Adapter by MAC ===
-function Match-Adapter($macList, $adapters) {
-    foreach ($mac in $macList) {
-        foreach ($conn in $adapters) {
-            $connMac = Get-MacAddress $conn
-            if ($connMac.ToUpper() -eq $mac.ToUpper()) {
-                return $conn
-            }
+# === Match adapter by MAC priority list ===
+function Match-Adapter {
+    param($macList, $conns)
+    foreach ($m in $macList) {
+        foreach ($c in $conns) {
+            if ((Get-MacAddress $c).ToUpper() -eq $m.ToUpper()) { return $c }
         }
     }
     return $null
 }
 
-# === Main logic ===
+# === Main logic: identify adapters ===
 $macs     = Load-MacList
 $wifiConn = Match-Adapter $macs.wifi      $allConns
 $ethConn  = Match-Adapter $macs.ethernet ($allConns | Where-Object { $_ -ne $wifiConn })
 
-if (-not $wifiConn) {
-    Log "ERROR: No matching Wi-Fi MAC"
-    Write-Host "ERROR: No matching Wi-Fi adapter found in MAC list."
-    Pause; exit 1
-}
-if (-not $ethConn) {
-    Log "ERROR: No matching Ethernet MAC"
-    Write-Host "ERROR: No matching Ethernet adapter found in MAC list."
-    Pause; exit 1
+if (-not $wifiConn -or -not $ethConn) {
+    Write-Host "ERROR: could not match adapters by MAC list."; exit 1
 }
 
 $wifiName = (GetProps $wifiConn).Name
@@ -110,12 +130,7 @@ $shared   = $cfgWifi.SharingEnabled -and $cfgEth.SharingEnabled
 Write-Host "`nWi-Fi:    $wifiName"
 Write-Host "Ethernet: $ethName"
 Write-Host -NoNewline "ICS is currently: "
-# Replace ternary with if/else
-if ($shared) {
-    Write-Host "ENABLED"
-} else {
-    Write-Host "DISABLED"
-}
+if ($shared) { Write-Host "ENABLED" } else { Write-Host "DISABLED" }
 Log "Adapters: Wi-Fi=$wifiName, Ethernet=$ethName, Shared=$shared"
 
 # === Menu Loop ===
@@ -123,54 +138,37 @@ while ($true) {
     Write-Host "`nMenu:"
     Write-Host "1. Enable sharing"
     Write-Host "2. Disable sharing"
-    Write-Host "3. Add Wi-Fi MAC"
-    Write-Host "4. Add Ethernet MAC"
+    Write-Host "3. Add Wi-Fi MAC (manual)"
+    Write-Host "4. Add Ethernet MAC (manual)"
+    Write-Host "5. Auto-add Wi-Fi MAC"
+    Write-Host "6. Auto-add Ethernet MAC"
     Write-Host "Q. Quit"
     $choice = Read-Host "Choose an option"
     Log "User selected: $choice"
 
     switch ($choice.ToUpper()) {
-        "1" {
-            if ($shared) {
-                Write-Host "ICS already enabled."
-                Log "No change: already enabled"
-            } else {
+        '1' {
+            if (-not $shared) {
                 foreach ($c in $allConns) {
                     $cfg = GetConfig $c
-                    if ($cfg.SharingEnabled) {
-                        $cfg.DisableSharing()
-                        Log "Disabled ICS on $((GetProps $c).Name)"
-                    }
+                    if ($cfg.SharingEnabled) { $cfg.DisableSharing(); Log "Disabled ICS on $((GetProps $c).Name)" }
                 }
-                $cfgWifi.EnableSharing(0)
-                $cfgEth.EnableSharing(1)
-                $shared = $true
-                Write-Host "Sharing ENABLED"
-                Log "ICS enabled"
-            }
+                $cfgWifi.EnableSharing(0); $cfgEth.EnableSharing(1); $shared = $true
+                Write-Host "Sharing ENABLED"; Log "ICS enabled"
+            } else { Write-Host "ICS already enabled."; Log "No-op enable" }
         }
-        "2" {
-            if (-not $shared) {
-                Write-Host "ICS already disabled."
-                Log "No change: already disabled"
-            } else {
-                $cfgWifi.DisableSharing()
-                $cfgEth.DisableSharing()
-                $shared = $false
-                Write-Host "Sharing DISABLED"
-                Log "ICS disabled"
-            }
+        '2' {
+            if ($shared) {
+                $cfgWifi.DisableSharing(); $cfgEth.DisableSharing(); $shared = $false
+                Write-Host "Sharing DISABLED"; Log "ICS disabled"
+            } else { Write-Host "ICS already disabled."; Log "No-op disable" }
         }
-        "3" { Add-Mac "wifi" }
-        "4" { Add-Mac "ethernet" }
-        "Q" {
-            Log "Exiting script"
-            break
-        }
-        default {
-            Write-Host "Invalid choice."
-            Log "Invalid input: $choice"
-        }
+        '3' { Add-Mac "wifi" }
+        '4' { Add-Mac "ethernet" }
+        '5' { Add-MacAuto 'wifi' }
+        '6' { Add-MacAuto 'ethernet' }
+        'Q' { Log "Exiting script"; break }
+        default { Write-Host "Invalid choice."; Log "Invalid input: $choice" }
     }
 }
 
